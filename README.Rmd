@@ -14,11 +14,42 @@ library(gbm)
 ```{r data parsing and inspection}
 popularity_data <- read.csv("OnlineNewsPopularity.csv")
 anyNA(popularity_data)
+str(daily_data)
 ```
 
-```{r data partition}
+```{r functions}
 filter_by_day <- function(day){
-  return(day_data <- popularity_data %>% filter(select(popularity_data, contains(day))==1))
+  return(day_data <- popularity_data %>% filter(select(popularity_data, contains(day))==1) 
+         %>% select(!contains("week"), !url, !timedelta))
 }
+scatter_plots <- function(var_1, var_2) {
+  base_plot <-ggplot(daily_data, aes(remove_outliers(.data[[var_1]]), remove_outliers(.data[[var_2]]))) + geom_jitter()
+  base_plot + geom_smooth()
+}
+remove_outliers <- function(x, na.rm = TRUE, ...) {
+  qnt <- quantile(x, probs=c(.25, .75), na.rm = na.rm, ...)
+  H <- 1.5 * IQR(x, na.rm = na.rm)
+  y <- x
+  y[x < (qnt[1] - H)] <- NA
+  y[x > (qnt[2] + H)] <- NA
+  y
+}
+```
+
+
+```{r data partition}
 daily_data <- filter_by_day("monday")
+partition_index <- createDataPartition(daily_data$shares,
+              p = .8,
+              list = FALSE,
+              times = 1)
+partition_index <- as.vector(partition_index)
+train_data <- daily_data[partition_index, ]
+test_data <- daily_data[-partition_index, ]
+```
+
+```{r initial data exploration}
+scatter_plots("global_rate_positive_words", "shares")
+scatter_plots("global_rate_negative_words", "shares")
+scatter_plots("global_sentiment_polarity", "shares")
 ```
