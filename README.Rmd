@@ -1,13 +1,14 @@
 ---
 title: "Project2"
-output: html_document
+author: "Yinzhou Zhu"
+date: "6/29/2020"
+output: github_document
 params:
-  day_of_week: NULL
   day_of_week: "monday"
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 library(tidyverse)
 library(knitr)
 library(caret)
@@ -15,6 +16,7 @@ library(gbm)
 library(GGally)
 library(parallel)
 library(doParallel)
+library(rmarkdown)
 ```
 
 ```{r functions}
@@ -121,4 +123,13 @@ summary(linear_fit)$adj.r.squared
 # 
 # stopCluster(cl)
 # registerDoSEQ()
+```
+
+```{r automation, results=FALSE}
+days <- c("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+map(.x = days, .f = ~render(input = "template.Rmd", 
+                            output_file = paste0(.x,"report.md"), 
+                            params = list(day_of_week = .x))
+    )
 ```
