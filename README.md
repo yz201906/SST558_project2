@@ -115,15 +115,6 @@ str(popularity_data)
     ##  $ shares                       : int  593 711 1500 1200 505 855 556 891 3600 710 ...
 
 ``` r
-days <- c("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
-
-map(.x = days, .f = ~render(input = "template.Rmd", 
-                            output_file = paste0(.x,"report.md"), 
-                            params = list(day_of_week = .x))
-    )
-```
-
-``` r
 daily_data <- filter_by_day(params$day_of_week)
 set.seed(35)
 partition_index <- createDataPartition(daily_data$shares,
@@ -244,4 +235,13 @@ summary(linear_fit)$adj.r.squared
 # 
 # stopCluster(cl)
 # registerDoSEQ()
+```
+
+``` r
+days <- c("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+map(.x = days, .f = ~render(input = "template.Rmd", 
+                            output_file = paste0(.x,"report.md"), 
+                            params = list(day_of_week = .x))
+    )
 ```

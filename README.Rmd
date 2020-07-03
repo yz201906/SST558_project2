@@ -125,7 +125,7 @@ summary(linear_fit)$adj.r.squared
 # registerDoSEQ()
 ```
 
-```{r automation, results=FALSE}
+```{r automation, results='hide', echo=TRUE}
 days <- c("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 
 map(.x = days, .f = ~render(input = "template.Rmd", 
