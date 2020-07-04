@@ -2,7 +2,9 @@
 title: "Daily report"
 author: "Yinzhou Zhu"
 date: "7/1/2020"
-output: github_document
+output: 
+  github_document:
+    toc: true
 params:
   day_of_week: NULL
 ---
@@ -18,13 +20,52 @@ train_data <- daily_data[partition_index, ]
 test_data <- daily_data[-partition_index, ]
 ```
 
-```{r day linear model}
-linear_fit <- lm(shares ~ kw_avg_avg + n_tokens_title + num_keywords + self_reference_avg_sharess,
-       data = train_data)
-linear_pred <- predict(linear_fit, newdata = test_data)
-summary(linear_fit)$adj.r.squared
+# Shares summary and visualization
+```{r Visualize shares}
+summary(daily_data$shares)
+density_plots_log("shares")
+box_plots_log("shares")
 ```
 
-```{r day non-linear models}
+# Linear regression model with first 100 predictions 
+```{r day linear model}
+linear_model_fit <- lm(shares ~ ., data = train_data)
+linear_model <- ols_step_both_aic(linear_model_fit)
+lr_formula <- paste0("shares ~ ", paste(linear_model$predictors, collapse = "+"))
+final_linear_model <- lm(lr_formula, data = train_data)
+lr_training_rmse <- get_lr_rmse(final_linear_model, train_data$shares)
+lr_test_rmse <- get_lr_rmse(final_linear_model, test_data$shares)
+lr_pred <- predict(final_linear_model, newdata = select(test_data, -"shares"))
+head(test_data$shares, 100)
+head(lr_pred, 100)
+```
 
+# Random forests model with first 100 predictions
+```{r day non linear}
+cores <- 8
+cl <- makePSOCKcluster(cores)
+registerDoParallel(cl)
+training_control <- trainControl(method = "repeatedcv", number = 10, repeats = 3, verboseIter = FALSE, allowParallel = TRUE)
+
+set.seed(333)
+rf_fit <- train(shares ~ ., train_data, method = "rf",
+                preProcess=c("center", "scale"), trControl = training_control)
+stopCluster(cl)
+registerDoSEQ()
+
+rf_train_pred <- predict(rf_fit, newdata = select(train_data, -"shares"))
+rf_pred <- predict(rf_fit, newdata = select(test_data, -"shares"))
+rf_train_rmse <- RMSE(rf_train_pred, test_data$shares)
+rf_test_rmse <- RMSE(rf_pred, test_data$shares)
+head(test_data$shares, 100)
+head(rf_pred, 100)
+```
+
+# Performance comparison
+```{r day performance comparison}
+lr_performance <- c("Linear regression model", lr_training_rmse, lr_test_rmse)
+rf_performance <- c("Random forests model", rf_train_rmse, rf_test_rmse)
+metric <- rbind(lr_performance, rf_performance)
+row.names(metric) <-NULL
+kable(rbind(c("", "Training RMSE", "Test RMSE"), metric))
 ```

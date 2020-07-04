@@ -3,6 +3,22 @@ Project2
 Yinzhou Zhu
 6/29/2020
 
+  - [Preparations](#preparations)
+  - [Initial data exploration](#initial-data-exploration)
+      - [Data parsing and inspection](#data-parsing-and-inspection)
+      - [Partitioning data](#partitioning-data)
+      - [Visualization](#visualization)
+      - [Linear regression model](#linear-regression-model)
+      - [Non-linear regression model](#non-linear-regression-model)
+  - [Comparing models](#comparing-models)
+  - [Automating reports for each day of
+    week](#automating-reports-for-each-day-of-week)
+
+# Preparations
+
+Below are some custom functions that I will be using including data
+filtering and plotting.
+
 ``` r
 convert_to_factors <- function(column_list) {
   popularity_data[column_list] <- lapply(popularity_data[column_list], factor)
@@ -12,32 +28,34 @@ filter_by_day <- function(day){
   day_data <- popularity_data %>% filter(select(popularity_data, contains(day))==1) %>% select(!contains("week") & !url & !timedelta)
   return(day_data)
 }
-scatter_plots <- function(var_1, var_2) {
-  base_plot <-ggplot(daily_data, aes(remove_outliers(.data[[var_1]]), remove_outliers(.data[[var_2]]))) + geom_point()
-  base_plot + geom_smooth()
+box_plots <- function(var){
+  base_plot <-ggplot(daily_data, aes(y = .data[[var]])) 
+  base_plot + geom_boxplot()
 }
-box_plots <- function(var_1, var_2){
-  base_plot <-ggplot(daily_data, aes(.data[[var_1]], remove_outliers(.data[[var_2]]))) 
+box_plots_log <- function(var){
+  base_plot <-ggplot(daily_data, aes(y = log(.data[[var]]))) 
+  base_plot + geom_boxplot()
+}
+box_plots_2 <- function(var_1, var_2){
+  base_plot <-ggplot(daily_data, aes(.data[[var_1]], log(.data[[var_2]]))) 
   base_plot + geom_boxplot(outlier.shape = NA) + geom_jitter(size = 0.2, width = 0.3, aes(colour = .data[[var_1]]))
 }
-bar_plots <- function(var_1) {
-  base_plot <-ggplot(daily_data, aes(remove_outliers(.data[[var_1]])))
-  base_plot + geom_bar()
+density_plots <- function(var_1) {
+  base_plot <-ggplot(daily_data, aes(.data[[var_1]]))
+  base_plot + geom_density()
 }
-corr_plots <- function(columns){
-  corr_plot <- ggpairs(daily_data, columns = columns, axisLabels = "none",
-          upper = list(continuous = wrap("cor", size = 1.5)))
-  print(corr_plot + theme(strip.placement = "outside", text = element_text(size = 5)))
+density_plots_log <- function(var_1) {
+  base_plot <-ggplot(daily_data, aes(log(.data[[var_1]])))
+  base_plot + geom_density()
 }
-remove_outliers <- function(x, na.rm = TRUE, ...) {
-  qnt <- quantile(x, probs=c(.25, .75), na.rm = na.rm, ...)
-  H <- 1.5 * IQR(x, na.rm = na.rm)
-  y <- x
-  y[x < (qnt[1] - H)] <- NA
-  y[x > (qnt[2] + H)] <- NA
-  y
+get_lr_rmse <- function(fitted_model, test_values) {
+  return(RMSE(fitted_model$fitted.values, test_values))
 }
 ```
+
+# Initial data exploration
+
+## Data parsing and inspection
 
 ``` r
 popularity_data <- read.csv("OnlineNewsPopularity.csv")
@@ -47,7 +65,6 @@ anyNA(popularity_data)
     ## [1] FALSE
 
 ``` r
-popularity_data <- convert_to_factors(c("data_channel_is_lifestyle", "data_channel_is_entertainment", "data_channel_is_bus", "data_channel_is_socmed", "data_channel_is_tech", "data_channel_is_world"))
 str(popularity_data)
 ```
 
@@ -65,12 +82,12 @@ str(popularity_data)
     ##  $ num_videos                   : num  0 0 0 0 0 0 0 0 0 1 ...
     ##  $ average_token_length         : num  4.68 4.91 4.39 4.4 4.68 ...
     ##  $ num_keywords                 : num  5 4 6 7 7 9 10 9 7 5 ...
-    ##  $ data_channel_is_lifestyle    : Factor w/ 2 levels "0","1": 1 1 1 1 1 1 2 1 1 1 ...
-    ##  $ data_channel_is_entertainment: Factor w/ 2 levels "0","1": 2 1 1 2 1 1 1 1 1 1 ...
-    ##  $ data_channel_is_bus          : Factor w/ 2 levels "0","1": 1 2 2 1 1 1 1 1 1 1 ...
-    ##  $ data_channel_is_socmed       : Factor w/ 2 levels "0","1": 1 1 1 1 1 1 1 1 1 1 ...
-    ##  $ data_channel_is_tech         : Factor w/ 2 levels "0","1": 1 1 1 1 2 2 1 2 2 1 ...
-    ##  $ data_channel_is_world        : Factor w/ 2 levels "0","1": 1 1 1 1 1 1 1 1 1 2 ...
+    ##  $ data_channel_is_lifestyle    : num  0 0 0 0 0 0 1 0 0 0 ...
+    ##  $ data_channel_is_entertainment: num  1 0 0 1 0 0 0 0 0 0 ...
+    ##  $ data_channel_is_bus          : num  0 1 1 0 0 0 0 0 0 0 ...
+    ##  $ data_channel_is_socmed       : num  0 0 0 0 0 0 0 0 0 0 ...
+    ##  $ data_channel_is_tech         : num  0 0 0 0 1 1 0 1 1 0 ...
+    ##  $ data_channel_is_world        : num  0 0 0 0 0 0 0 0 0 1 ...
     ##  $ kw_min_min                   : num  0 0 0 0 0 0 0 0 0 0 ...
     ##  $ kw_max_min                   : num  0 0 0 0 0 0 0 0 0 0 ...
     ##  $ kw_avg_min                   : num  0 0 0 0 0 0 0 0 0 0 ...
@@ -115,6 +132,14 @@ str(popularity_data)
     ##  $ shares                       : int  593 711 1500 1200 505 855 556 891 3600 710 ...
 
 ``` r
+popularity_data <- convert_to_factors(c("data_channel_is_lifestyle", "data_channel_is_entertainment", "data_channel_is_bus", "data_channel_is_socmed", "data_channel_is_tech", "data_channel_is_world"))
+```
+
+## Partitioning data
+
+Data filtering based on day of week and training/test data partitioning.
+
+``` r
 daily_data <- filter_by_day(params$day_of_week)
 set.seed(35)
 partition_index <- createDataPartition(daily_data$shares,
@@ -126,122 +151,324 @@ train_data <- daily_data[partition_index, ]
 test_data <- daily_data[-partition_index, ]
 ```
 
-``` r
-scatter_plots("global_rate_positive_words", "shares")
-```
+## Visualization
 
-![](README_files/figure-gfm/initial%20data%20exploration-1.png)<!-- -->
+  - 5-number summary  
+  - Density plot for `shares`  
+  - Boxplot for `shares`  
+  - Transformed density plot for `shares`  
+  - Transformed boxplot for `shares`  
+  - Comparison boxplots between different channels and share numbers  
+  - Correlation plot for predictors
 
-``` r
-scatter_plots("global_rate_negative_words", "shares")
-```
-
-![](README_files/figure-gfm/initial%20data%20exploration-2.png)<!-- -->
-
-``` r
-scatter_plots("global_sentiment_polarity", "shares")
-```
-
-![](README_files/figure-gfm/initial%20data%20exploration-3.png)<!-- -->
+<!-- end list -->
 
 ``` r
-box_plots("data_channel_is_lifestyle", "shares")
+summary(daily_data$shares)
 ```
 
-![](README_files/figure-gfm/initial%20data%20exploration-4.png)<!-- -->
+    ##    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+    ##       1     919    1400    3647    2700  690400
 
 ``` r
-box_plots("data_channel_is_entertainment", "shares")
+density_plots("shares")
 ```
 
-![](README_files/figure-gfm/initial%20data%20exploration-5.png)<!-- -->
+![](README_files/figure-gfm/initial%20data%20visualization-1.png)<!-- -->
 
 ``` r
-box_plots("data_channel_is_bus", "shares")
+box_plots("shares")
 ```
 
-![](README_files/figure-gfm/initial%20data%20exploration-6.png)<!-- -->
+![](README_files/figure-gfm/initial%20data%20visualization-2.png)<!-- -->
 
 ``` r
-box_plots("data_channel_is_socmed", "shares")
+density_plots_log("shares")
 ```
 
-![](README_files/figure-gfm/initial%20data%20exploration-7.png)<!-- -->
+![](README_files/figure-gfm/initial%20data%20visualization-3.png)<!-- -->
 
 ``` r
-box_plots("data_channel_is_tech", "shares")
+box_plots_log("shares")
 ```
 
-![](README_files/figure-gfm/initial%20data%20exploration-8.png)<!-- -->
+![](README_files/figure-gfm/initial%20data%20visualization-4.png)<!-- -->
 
 ``` r
-box_plots("data_channel_is_world", "shares")
+box_plots_2("data_channel_is_lifestyle", "shares")
 ```
 
-![](README_files/figure-gfm/initial%20data%20exploration-9.png)<!-- -->
+![](README_files/figure-gfm/initial%20data%20visualization-5.png)<!-- -->
 
 ``` r
-scatter_plots("n_unique_tokens", "shares")
+box_plots_2("data_channel_is_entertainment", "shares")
 ```
 
-![](README_files/figure-gfm/initial%20data%20exploration-10.png)<!-- -->
+![](README_files/figure-gfm/initial%20data%20visualization-6.png)<!-- -->
 
 ``` r
-corr_plots(c("LDA_00", "LDA_01", "LDA_02", "LDA_03", "LDA_04"))
+box_plots_2("data_channel_is_bus", "shares")
 ```
 
-![](README_files/figure-gfm/initial%20data%20exploration-11.png)<!-- -->
+![](README_files/figure-gfm/initial%20data%20visualization-7.png)<!-- -->
 
 ``` r
-scatter_plots("kw_avg_avg", "shares")
+box_plots_2("data_channel_is_socmed", "shares")
 ```
 
-![](README_files/figure-gfm/initial%20data%20exploration-12.png)<!-- -->
+![](README_files/figure-gfm/initial%20data%20visualization-8.png)<!-- -->
 
 ``` r
-linear_fit <- lm(shares ~ kw_avg_avg + n_tokens_title + num_keywords + self_reference_avg_sharess,
-       data = train_data)
-linear_pred <- predict(linear_fit, newdata = test_data)
-summary(linear_fit)$adj.r.squared
+box_plots_2("data_channel_is_tech", "shares")
 ```
 
-    ## [1] 0.02725227
+![](README_files/figure-gfm/initial%20data%20visualization-9.png)<!-- -->
 
 ``` r
-# cores <- 6
-# cl <- makePSOCKcluster(cores)
-# registerDoParallel(cl)
-# training_control <- trainControl(method = "repeatedcv", number = 10, repeats = 3, verboseIter = FALSE, allowParallel = TRUE)
-# set.seed(333)
-# rf_fit <- train(shares ~ ., train_data, method = "rf",
-#                 preProcess=c("center", "scale"), trControl = training_control)
-# rf_fit
-# rf_pred <- predict(rf_fit, newdata = select(test_data, -"shares"))
-# 
-# set.seed(333)
-# tree_bag_fit <- train(shares ~ ., train_data, method = "treebag", 
-#                  preProcess=c("center", "scale"), trControl = training_control)
-# tree_bag_fit
-# bagged_pred <- predict(tree_bag_fit, newdata = select(test_data, -"shares"))
-# 
-# set.seed(333)
-# bt_fit <- train(shares ~ ., train_data, method = "gbm", verbose = 0,
-#                 preProcess=c("center", "scale"), trControl = training_control,
-#                 tuneGrid = expand.grid(n.trees = c(100, 200, 500), interaction.depth = c(1,4,9),
-#                                        shrinkage = 0.1, n.minobsinnode = 10))
-# bt_fit
-# bt_pred <- predict(bt_fit, newdata = select(test_data, -"shares"))
-# 
-# 
-# stopCluster(cl)
-# registerDoSEQ()
+box_plots_2("data_channel_is_world", "shares")
 ```
+
+![](README_files/figure-gfm/initial%20data%20visualization-10.png)<!-- -->
+
+``` r
+ggcorr(data = daily_data, size = 1, nbreaks = 5, method = c("everything", "pearson"))
+```
+
+![](README_files/figure-gfm/initial%20data%20visualization-11.png)<!-- -->
+
+## Linear regression model
+
+  - Step-wise forward+backward selection based on AIC values  
+  - AIC plot  
+  - Saved chosen predictors, training RMSE and test RMSE
+
+<!-- end list -->
+
+``` r
+linear_model_fit <- lm(shares ~ ., data = train_data)
+linear_model <- ols_step_both_aic(linear_model_fit)
+linear_model
+```
+
+    ## 
+    ## 
+    ##                                                     Stepwise Summary                                                    
+    ## ----------------------------------------------------------------------------------------------------------------------
+    ## Variable                          Method        AIC              RSS               Sum Sq          R-Sq      Adj. R-Sq 
+    ## ----------------------------------------------------------------------------------------------------------------------
+    ## self_reference_min_shares        addition    115976.145    878279271380.956    34002315931.593    0.03727      0.03709 
+    ## kw_avg_avg                       addition    115936.540    871450158409.543    40831428903.006    0.04476      0.04440 
+    ## kw_max_avg                       addition    115905.029    865988458748.587    46293128563.962    0.05074      0.05021 
+    ## kw_min_avg                       addition    115892.308    863599930493.973    48681656818.577    0.05336      0.05265 
+    ## avg_negative_polarity            addition    115885.218    862128377849.626    50153209462.923    0.05498      0.05409 
+    ## average_token_length             addition    115879.228    860836887499.779    51444699812.770    0.05639      0.05533 
+    ## kw_max_min                       addition    115874.750    859791375813.300    52490211499.249    0.05754      0.05630 
+    ## global_subjectivity              addition    115871.127    858884729155.358    53396858157.192    0.05853      0.05712 
+    ## data_channel_is_entertainment    addition    115867.816    858029328189.066    54252259123.483    0.05947      0.05788 
+    ## num_keywords                     addition    115866.373    857475326841.694    54806260470.855    0.06008      0.05831 
+    ## min_positive_polarity            addition    115866.162    857119643563.554    55161943748.995    0.06047      0.05852 
+    ## ----------------------------------------------------------------------------------------------------------------------
+
+``` r
+plot(linear_model$aic)
+```
+
+![](README_files/figure-gfm/linear%20model-1.png)<!-- -->
+
+``` r
+lr_formula <- paste0("shares ~ ", paste(linear_model$predictors, collapse = "+"))
+final_linear_model <- lm(lr_formula, data = train_data)
+lr_training_rmse <- get_lr_rmse(final_linear_model, train_data$shares)
+lr_test_rmse <- get_lr_rmse(final_linear_model, test_data$shares)
+lr_pred <- predict(final_linear_model, newdata = select(test_data, -"shares"))
+head(lr_pred, 100)
+```
+
+    ##            2           10           15           20           22           26 
+    ## -3228.520595 -2990.587305 -2601.566411  -917.499323 -3360.745100 -2335.912243 
+    ##           27           39           40           45           53           60 
+    ##  -208.417756 -1896.383268 -3076.097720 -1112.016544  -862.676126  -782.844185 
+    ##           71           86           89          110          111          115 
+    ##  -480.686333   817.497419  4608.610465  -449.103770    -1.603388  2771.517464 
+    ##          118          128          146          148          153          160 
+    ##  1481.714557   966.086978  1476.977762  1074.191866  3171.502763  1645.497950 
+    ##          162          170          171          196          197          204 
+    ##  1001.017436  1501.032677  -271.041409  2622.063427   646.632227  2703.146768 
+    ##          211          231          243          244          245          251 
+    ##  1716.996401  1478.212546   543.177603  2892.981742   549.563978  2121.988422 
+    ##          259          264          265          268          275          277 
+    ##  3005.146608   196.428975   915.809989   290.916481  3490.300668  1879.778716 
+    ##          280          287          297          298          300          308 
+    ##  3587.288172  1774.996197  1793.527509  1587.892088  2749.809200  5255.570516 
+    ##          312          314          316          318          319          330 
+    ##   919.123307  4487.686107  2377.518278  3216.723890  1017.312297  2379.818956 
+    ##          331          333          334          338          341          347 
+    ##  1210.148434  1964.453652  1910.142468   758.694055  1593.001574  3169.573446 
+    ##          358          359          364          367          374          377 
+    ##  3327.676394  3833.531142  2583.511962 -1104.626947  3879.627439  2731.911310 
+    ##          381          382          385          388          397          398 
+    ##   537.615433  1247.862920  2334.488730  4212.509951  2529.630832  2073.576153 
+    ##          399          400          404          406          408          424 
+    ##  1240.965026  3168.898147  2253.458937  2603.673301   261.321427   845.191523 
+    ##          426          428          431          433          446          448 
+    ##  -197.316245   321.742228  1941.147246  3509.437430  3837.787110  2828.451000 
+    ##          470          473          474          477          479          481 
+    ##  2934.587377  2771.859079  4182.799538  4060.463391  3626.879089 15281.742890 
+    ##          484          488          498          500          501          506 
+    ##  1404.849859   472.627124  2750.523571  1483.196635  3887.551564  5040.890333 
+    ##          510          511          521          530 
+    ##  2370.975180  3042.555930  3825.482425  1987.187113
+
+## Non-linear regression model
+
+  - Random forests  
+  - Bagged tree  
+  - Boosting tree  
+  - Saved training RMSEs and test RMSEs
+
+<!-- end list -->
+
+``` r
+cores <- 8
+cl <- makePSOCKcluster(cores)
+registerDoParallel(cl)
+training_control <- trainControl(method = "repeatedcv", number = 10, repeats = 3, verboseIter = FALSE, allowParallel = TRUE)
+set.seed(333)
+rf_fit <- train(shares ~ ., train_data, method = "rf",
+                preProcess=c("center", "scale"), trControl = training_control)
+rf_fit
+```
+
+    ## Random Forest 
+    ## 
+    ## 5330 samples
+    ##   50 predictor
+    ## 
+    ## Pre-processing: centered (50), scaled (50) 
+    ## Resampling: Cross-Validated (10 fold, repeated 3 times) 
+    ## Summary of sample sizes: 4798, 4797, 4797, 4796, 4798, 4798, ... 
+    ## Resampling results across tuning parameters:
+    ## 
+    ##   mtry  RMSE      Rsquared    MAE     
+    ##    2    11350.55  0.02755032  3652.261
+    ##   26    11954.23  0.02243909  3883.399
+    ##   50    12425.18  0.02368309  3926.143
+    ## 
+    ## RMSE was used to select the optimal model using the smallest value.
+    ## The final value used for the model was mtry = 2.
+
+``` r
+set.seed(333)
+tree_bag_fit <- train(shares ~ ., train_data, method = "treebag",
+                 preProcess=c("center", "scale"), trControl = training_control)
+tree_bag_fit
+```
+
+    ## Bagged CART 
+    ## 
+    ## 5330 samples
+    ##   50 predictor
+    ## 
+    ## Pre-processing: centered (50), scaled (50) 
+    ## Resampling: Cross-Validated (10 fold, repeated 3 times) 
+    ## Summary of sample sizes: 4798, 4797, 4797, 4796, 4798, 4798, ... 
+    ## Resampling results:
+    ## 
+    ##   RMSE      Rsquared    MAE     
+    ##   11573.25  0.01756665  3589.524
+
+``` r
+set.seed(333)
+bt_fit <- train(shares ~ ., train_data, method = "gbm", verbose = 0,
+                preProcess=c("center", "scale"), trControl = training_control,
+                tuneGrid = expand.grid(n.trees = c(100, 200, 500), interaction.depth = c(1,4,9),
+                                       shrinkage = 0.1, n.minobsinnode = 10))
+bt_fit
+```
+
+    ## Stochastic Gradient Boosting 
+    ## 
+    ## 5330 samples
+    ##   50 predictor
+    ## 
+    ## Pre-processing: centered (50), scaled (50) 
+    ## Resampling: Cross-Validated (10 fold, repeated 3 times) 
+    ## Summary of sample sizes: 4798, 4797, 4797, 4796, 4798, 4798, ... 
+    ## Resampling results across tuning parameters:
+    ## 
+    ##   interaction.depth  n.trees  RMSE      Rsquared     MAE     
+    ##   1                  100      11732.01  0.008945435  3668.105
+    ##   1                  200      11799.59  0.009110739  3683.330
+    ##   1                  500      12062.19  0.011473329  3682.240
+    ##   4                  100      11640.59  0.024596873  3684.933
+    ##   4                  200      11782.88  0.025291249  3793.274
+    ##   4                  500      12052.52  0.021584941  4124.037
+    ##   9                  100      11917.06  0.016155954  3933.192
+    ##   9                  200      12133.55  0.017008999  4166.232
+    ##   9                  500      12327.46  0.017275876  4491.501
+    ## 
+    ## Tuning parameter 'shrinkage' was held constant at a value of 0.1
+    ## 
+    ## Tuning parameter 'n.minobsinnode' was held constant at a value of 10
+    ## RMSE was used to select the optimal model using the smallest value.
+    ## The final values used for the model were n.trees = 100, interaction.depth =
+    ##  4, shrinkage = 0.1 and n.minobsinnode = 10.
+
+``` r
+stopCluster(cl)
+registerDoSEQ()
+
+rf_train_pred <- predict(rf_fit, newdata = select(train_data, -"shares"))
+rf_pred <- predict(rf_fit, newdata = select(test_data, -"shares"))
+rf_train_rmse <- RMSE(rf_train_pred, test_data$shares)
+rf_test_rmse <- RMSE(rf_pred, test_data$shares)
+
+tb_train_pred <- predict(tree_bag_fit, newdata = select(train_data, -"shares"))
+tb_pred <- predict(tree_bag_fit, newdata = select(test_data, -"shares"))
+tb_train_rmse <- RMSE(tb_train_pred, test_data$shares)
+tb_test_rmse <- RMSE(tb_pred, test_data$shares)
+
+bt_train_pred <- predict(bt_fit, newdata = select(train_data, -"shares"))
+bt_pred <- predict(bt_fit, newdata = select(test_data, -"shares"))
+bt_train_rmse <- RMSE(bt_train_pred, test_data$shares)
+bt_test_rmse <- RMSE(bt_pred, test_data$shares)
+```
+
+# Comparing models
+
+``` r
+lr_performance <- c("Linear regression model", lr_training_rmse, lr_test_rmse)
+rf_performance <- c("Random forests model", rf_train_rmse, rf_test_rmse)
+tree_bag_performance <- c("Bagged tree model", tb_train_rmse, tb_test_rmse)
+bt_performance <- c("Random forests model", bt_train_rmse, bt_test_rmse)
+metric <- rbind(lr_performance, rf_performance, tree_bag_performance, bt_performance)
+row.names(metric) <-NULL
+kable(rbind(c("", "Training RMSE", "Test RMSE"), metric))
+```
+
+|                         |                  |                  |
+| :---------------------- | :--------------- | :--------------- |
+|                         | Training RMSE    | Test RMSE        |
+| Linear regression model | 12681.1056179252 | 20165.5965689592 |
+| Random forests model    | 20836.5562723611 | 19719.0736386239 |
+| Bagged tree model       | 20095.0196038929 | 19843.0988926115 |
+| Random forests model    | 20287.8599820034 | 19895.4403672363 |
+
+# Automating reports for each day of week
 
 ``` r
 days <- c("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 
-map(.x = days, .f = ~render(input = "template.Rmd", 
-                            output_file = paste0(.x,"report.md"), 
+map(.x = days, .f = ~render(input = "template.Rmd",
+                            output_file = paste0(.x,"_report.md"),
                             params = list(day_of_week = .x))
     )
 ```
+
+The analysis for [Monday is available here](monday_report.md).  
+The analysis for [Tuesday is available here](tuesday_report.md).  
+The analysis for [Wednesday is available here](wednesday_report.md).  
+The analysis for [Thursday is available here](thursday_report.md).  
+The analysis for [Friday is available here](friday_report.md).  
+The analysis for [Saturday is available here](saturday_report.md).  
+The analysis for [Sunday is available here](sunday_report.md).

@@ -2,7 +2,9 @@
 title: "Project2"
 author: "Yinzhou Zhu"
 date: "6/29/2020"
-output: github_document
+output: 
+  github_document:
+    toc: true
 params:
   day_of_week: "monday"
 ---
@@ -17,8 +19,12 @@ library(GGally)
 library(parallel)
 library(doParallel)
 library(rmarkdown)
+library(olsrr)
+library(MuMIn)
 ```
 
+# Preparations
+Below are some custom functions that I will be using including data filtering and plotting.  
 ```{r functions}
 convert_to_factors <- function(column_list) {
   popularity_data[column_list] <- lapply(popularity_data[column_list], factor)
@@ -28,40 +34,42 @@ filter_by_day <- function(day){
   day_data <- popularity_data %>% filter(select(popularity_data, contains(day))==1) %>% select(!contains("week") & !url & !timedelta)
   return(day_data)
 }
-scatter_plots <- function(var_1, var_2) {
-  base_plot <-ggplot(daily_data, aes(remove_outliers(.data[[var_1]]), remove_outliers(.data[[var_2]]))) + geom_point()
-  base_plot + geom_smooth()
+box_plots <- function(var){
+  base_plot <-ggplot(daily_data, aes(y = .data[[var]])) 
+  base_plot + geom_boxplot()
 }
-box_plots <- function(var_1, var_2){
-  base_plot <-ggplot(daily_data, aes(.data[[var_1]], remove_outliers(.data[[var_2]]))) 
+box_plots_log <- function(var){
+  base_plot <-ggplot(daily_data, aes(y = log(.data[[var]]))) 
+  base_plot + geom_boxplot()
+}
+box_plots_2 <- function(var_1, var_2){
+  base_plot <-ggplot(daily_data, aes(.data[[var_1]], log(.data[[var_2]]))) 
   base_plot + geom_boxplot(outlier.shape = NA) + geom_jitter(size = 0.2, width = 0.3, aes(colour = .data[[var_1]]))
 }
-bar_plots <- function(var_1) {
-  base_plot <-ggplot(daily_data, aes(remove_outliers(.data[[var_1]])))
-  base_plot + geom_bar()
+density_plots <- function(var_1) {
+  base_plot <-ggplot(daily_data, aes(.data[[var_1]]))
+  base_plot + geom_density()
 }
-corr_plots <- function(columns){
-  corr_plot <- ggpairs(daily_data, columns = columns, axisLabels = "none",
-          upper = list(continuous = wrap("cor", size = 1.5)))
-  print(corr_plot + theme(strip.placement = "outside", text = element_text(size = 5)))
+density_plots_log <- function(var_1) {
+  base_plot <-ggplot(daily_data, aes(log(.data[[var_1]])))
+  base_plot + geom_density()
 }
-remove_outliers <- function(x, na.rm = TRUE, ...) {
-  qnt <- quantile(x, probs=c(.25, .75), na.rm = na.rm, ...)
-  H <- 1.5 * IQR(x, na.rm = na.rm)
-  y <- x
-  y[x < (qnt[1] - H)] <- NA
-  y[x > (qnt[2] + H)] <- NA
-  y
+get_lr_rmse <- function(fitted_model, test_values) {
+  return(RMSE(fitted_model$fitted.values, test_values))
 }
 ```
 
+# Initial data exploration
+## Data parsing and inspection
 ```{r data parsing and inspection}
 popularity_data <- read.csv("OnlineNewsPopularity.csv")
 anyNA(popularity_data)
-popularity_data <- convert_to_factors(c("data_channel_is_lifestyle", "data_channel_is_entertainment", "data_channel_is_bus", "data_channel_is_socmed", "data_channel_is_tech", "data_channel_is_world"))
 str(popularity_data)
+popularity_data <- convert_to_factors(c("data_channel_is_lifestyle", "data_channel_is_entertainment", "data_channel_is_bus", "data_channel_is_socmed", "data_channel_is_tech", "data_channel_is_world"))
 ```
 
+## Partitioning data
+Data filtering based on day of week and training/test data partitioning.  
 ```{r data partition}
 daily_data <- filter_by_day(params$day_of_week)
 set.seed(35)
@@ -74,62 +82,116 @@ train_data <- daily_data[partition_index, ]
 test_data <- daily_data[-partition_index, ]
 ```
 
-```{r initial data exploration}
-scatter_plots("global_rate_positive_words", "shares")
-scatter_plots("global_rate_negative_words", "shares")
-scatter_plots("global_sentiment_polarity", "shares")
-box_plots("data_channel_is_lifestyle", "shares")
-box_plots("data_channel_is_entertainment", "shares")
-box_plots("data_channel_is_bus", "shares")
-box_plots("data_channel_is_socmed", "shares")
-box_plots("data_channel_is_tech", "shares")
-box_plots("data_channel_is_world", "shares")
-scatter_plots("n_unique_tokens", "shares")
-corr_plots(c("LDA_00", "LDA_01", "LDA_02", "LDA_03", "LDA_04"))
-scatter_plots("kw_avg_avg", "shares")
+## Visualization
+* 5-number summary  
+* Density plot for `shares`  
+* Boxplot for `shares`  
+* Transformed density plot for `shares`  
+* Transformed boxplot for `shares`  
+* Comparison boxplots between different channels and share numbers  
+* Correlation plot for predictors  
+```{r initial data visualization}
+summary(daily_data$shares)
+density_plots("shares")
+box_plots("shares")
+density_plots_log("shares")
+box_plots_log("shares")
+box_plots_2("data_channel_is_lifestyle", "shares")
+box_plots_2("data_channel_is_entertainment", "shares")
+box_plots_2("data_channel_is_bus", "shares")
+box_plots_2("data_channel_is_socmed", "shares")
+box_plots_2("data_channel_is_tech", "shares")
+box_plots_2("data_channel_is_world", "shares")
+ggcorr(data = daily_data, size = 1, nbreaks = 5, method = c("everything", "pearson"))
 ```
 
+## Linear regression model
+* Step-wise forward+backward selection based on AIC values  
+* AIC plot  
+* Saved chosen predictors, training RMSE and test RMSE  
 ```{r linear model}
-linear_fit <- lm(shares ~ kw_avg_avg + n_tokens_title + num_keywords + self_reference_avg_sharess,
-       data = train_data)
-linear_pred <- predict(linear_fit, newdata = test_data)
-summary(linear_fit)$adj.r.squared
-```
-```{r non-linear models}
-# cores <- 6
-# cl <- makePSOCKcluster(cores)
-# registerDoParallel(cl)
-# training_control <- trainControl(method = "repeatedcv", number = 10, repeats = 3, verboseIter = FALSE, allowParallel = TRUE)
-# set.seed(333)
-# rf_fit <- train(shares ~ ., train_data, method = "rf",
-#                 preProcess=c("center", "scale"), trControl = training_control)
-# rf_fit
-# rf_pred <- predict(rf_fit, newdata = select(test_data, -"shares"))
-# 
-# set.seed(333)
-# tree_bag_fit <- train(shares ~ ., train_data, method = "treebag", 
-#                  preProcess=c("center", "scale"), trControl = training_control)
-# tree_bag_fit
-# bagged_pred <- predict(tree_bag_fit, newdata = select(test_data, -"shares"))
-# 
-# set.seed(333)
-# bt_fit <- train(shares ~ ., train_data, method = "gbm", verbose = 0,
-#                 preProcess=c("center", "scale"), trControl = training_control,
-#                 tuneGrid = expand.grid(n.trees = c(100, 200, 500), interaction.depth = c(1,4,9),
-#                                        shrinkage = 0.1, n.minobsinnode = 10))
-# bt_fit
-# bt_pred <- predict(bt_fit, newdata = select(test_data, -"shares"))
-# 
-# 
-# stopCluster(cl)
-# registerDoSEQ()
+linear_model_fit <- lm(shares ~ ., data = train_data)
+linear_model <- ols_step_both_aic(linear_model_fit)
+linear_model
+plot(linear_model$aic)
+lr_formula <- paste0("shares ~ ", paste(linear_model$predictors, collapse = "+"))
+final_linear_model <- lm(lr_formula, data = train_data)
+lr_training_rmse <- get_lr_rmse(final_linear_model, train_data$shares)
+lr_test_rmse <- get_lr_rmse(final_linear_model, test_data$shares)
+lr_pred <- predict(final_linear_model, newdata = select(test_data, -"shares"))
+head(lr_pred, 100)
 ```
 
+## Non-linear regression model
+* Random forests  
+* Bagged tree  
+* Boosting tree  
+* Saved training RMSEs and test RMSEs  
+```{r non-linear models}
+cores <- 8
+cl <- makePSOCKcluster(cores)
+registerDoParallel(cl)
+training_control <- trainControl(method = "repeatedcv", number = 10, repeats = 3, verboseIter = FALSE, allowParallel = TRUE)
+set.seed(333)
+rf_fit <- train(shares ~ ., train_data, method = "rf",
+                preProcess=c("center", "scale"), trControl = training_control)
+rf_fit
+
+set.seed(333)
+tree_bag_fit <- train(shares ~ ., train_data, method = "treebag",
+                 preProcess=c("center", "scale"), trControl = training_control)
+tree_bag_fit
+
+set.seed(333)
+bt_fit <- train(shares ~ ., train_data, method = "gbm", verbose = 0,
+                preProcess=c("center", "scale"), trControl = training_control,
+                tuneGrid = expand.grid(n.trees = c(100, 200, 500), interaction.depth = c(1,4,9),
+                                       shrinkage = 0.1, n.minobsinnode = 10))
+bt_fit
+
+stopCluster(cl)
+registerDoSEQ()
+
+rf_train_pred <- predict(rf_fit, newdata = select(train_data, -"shares"))
+rf_pred <- predict(rf_fit, newdata = select(test_data, -"shares"))
+rf_train_rmse <- RMSE(rf_train_pred, test_data$shares)
+rf_test_rmse <- RMSE(rf_pred, test_data$shares)
+
+tb_train_pred <- predict(tree_bag_fit, newdata = select(train_data, -"shares"))
+tb_pred <- predict(tree_bag_fit, newdata = select(test_data, -"shares"))
+tb_train_rmse <- RMSE(tb_train_pred, test_data$shares)
+tb_test_rmse <- RMSE(tb_pred, test_data$shares)
+
+bt_train_pred <- predict(bt_fit, newdata = select(train_data, -"shares"))
+bt_pred <- predict(bt_fit, newdata = select(test_data, -"shares"))
+bt_train_rmse <- RMSE(bt_train_pred, test_data$shares)
+bt_test_rmse <- RMSE(bt_pred, test_data$shares)
+```
+
+# Comparing models
+```{r comparisons}
+lr_performance <- c("Linear regression model", lr_training_rmse, lr_test_rmse)
+rf_performance <- c("Random forests model", rf_train_rmse, rf_test_rmse)
+tree_bag_performance <- c("Bagged tree model", tb_train_rmse, tb_test_rmse)
+bt_performance <- c("Random forests model", bt_train_rmse, bt_test_rmse)
+metric <- rbind(lr_performance, rf_performance, tree_bag_performance, bt_performance)
+row.names(metric) <-NULL
+kable(rbind(c("", "Training RMSE", "Test RMSE"), metric))
+```
+
+# Automating reports for each day of week
 ```{r automation, results='hide', echo=TRUE}
 days <- c("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 
-map(.x = days, .f = ~render(input = "template.Rmd", 
-                            output_file = paste0(.x,"report.md"), 
+map(.x = days, .f = ~render(input = "template.Rmd",
+                            output_file = paste0(.x,"_report.md"),
                             params = list(day_of_week = .x))
     )
 ```
+The analysis for [Monday is available here](monday_report.md).  
+The analysis for [Tuesday is available here](tuesday_report.md).  
+The analysis for [Wednesday is available here](wednesday_report.md).  
+The analysis for [Thursday is available here](thursday_report.md).  
+The analysis for [Friday is available here](friday_report.md).  
+The analysis for [Saturday is available here](saturday_report.md).  
+The analysis for [Sunday is available here](sunday_report.md).  
